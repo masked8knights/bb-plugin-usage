@@ -470,6 +470,28 @@ describe("usage collectors", () => {
       eventKey: `freebuff:machine-a:${day}:freebuff:mimo-2.6-flash:project-a:estimate`,
     });
   });
+
+  it("drops credential-shaped model labels before they reach the event key", () => {
+    const day = "2026-08-09";
+    // bb-freebuff's bridge once wrote its session token into `fact.model`.
+    const token = `fbm1.${"A".repeat(60)}-${"b".repeat(50)}`;
+    const scan = JSON.stringify([{
+      day, modelProviderId: "freebuff", model: token, project: "project-a",
+      loggedCostUsd: null, uncachedInputTokens: 10, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 5,
+    }]);
+    const [record] = parseHostUsageAggregates(scan, "freebuff", machine);
+    expect(record).toMatchObject({
+      model: "unknown",
+      eventKey: `freebuff:machine-a:${day}:freebuff:unknown:project-a:estimate`,
+    });
+    expect(JSON.stringify(record)).not.toContain(token.slice(0, 16));
+    // Dotted, versioned model ids are not credentials and must survive.
+    const dotted = JSON.stringify([{
+      day, modelProviderId: "kilo", model: "gemini-2.5-pro-preview-03-25", project: "project-a",
+      loggedCostUsd: null, uncachedInputTokens: 1, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 1,
+    }]);
+    expect(parseHostUsageAggregates(dotted, "kilocode", machine)[0]!.model).toBe("gemini-2.5-pro-preview-03-25");
+  });
 });
 
 

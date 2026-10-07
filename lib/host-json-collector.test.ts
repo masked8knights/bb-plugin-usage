@@ -579,6 +579,36 @@ describe("host JSON usage collector", () => {
     expect(second.rows).toEqual(first.rows);
   });
 
+  it("refuses to carry a credential written into a Freebuff model label", async () => {
+    const directory = await temporaryDirectory();
+    const root = join(directory, ".freebuff", "usage.jsonl");
+    const cachePath = join(directory, "cache", "freebuff.json");
+    await mkdir(join(directory, ".freebuff"), { recursive: true });
+    const token = `fbm1.${"A".repeat(60)}-${"b".repeat(50)}`;
+    await writeFile(root, [
+      { kind: "generation", fact: {
+        created_at_ms: Date.parse("2026-08-09T00:00:00Z"),
+        model: token,
+        provider: "freebuff",
+        input_tokens: 15493,
+        cache_read_tokens: 0,
+        output_tokens: 1,
+        total_cost: null,
+        cwd: "/home/user/project",
+      } },
+    ].map((value) => JSON.stringify(value)).join("\n"));
+
+    const result = await scan("freebuff", join(directory, ".freebuff"), cachePath);
+    const day = localDay("2026-08-09T00:00:00Z");
+    expect(result.rows).toEqual([expect.objectContaining({
+      day, modelProviderId: "freebuff", model: "unknown", project: "project",
+      uncachedInputTokens: 15493, outputTokens: 1,
+    })]);
+    expect(JSON.stringify(result)).not.toContain(token.slice(0, 16));
+    // The on-disk cache must not retain the secret either.
+    expect(await readFile(cachePath, "utf8")).not.toContain(token.slice(0, 16));
+  });
+
   it("counts each Claude API response once across repeated rows, files, and cached scans", async () => {
     const directory = await temporaryDirectory();
     const root = join(directory, "projects");

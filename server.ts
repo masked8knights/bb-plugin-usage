@@ -1188,8 +1188,6 @@ export default async function plugin(bb: BbPluginApi) {
       const machineNames = new Map(machines.map((machine) => [machine.id, machine.name]));
       const rows = db.prepare(dashboardRecordsSql()).all() as Array<Omit<DashboardRecord, "machineName">>;
       const records = rows.map((row) => ({ ...row, machineName: machineNames.get(row.machineId) ?? "Unknown machine" }));
-      const sources = db.prepare(`SELECT machine_id machineId, provider_id agentId, status, last_attempt_at lastAttemptAt,
-        last_success_at lastSuccessAt, record_count recordCount, error FROM usage_sync_state ORDER BY machine_id, provider_id`).all() as SourceState[];
       const sync = syncCoordinator.snapshot();
       const modelProviders = db.prepare(`SELECT model_provider_id id, MAX(model_provider_name) name
         FROM usage_events GROUP BY model_provider_id ORDER BY name`).all() as Array<{ id: string; name: string }>;
@@ -1199,6 +1197,14 @@ export default async function plugin(bb: BbPluginApi) {
       const extraAgents = (db.prepare(`SELECT provider_id id, MAX(provider_name) name
         FROM usage_events GROUP BY provider_id ORDER BY name`).all() as Array<{ id: string; name: string }>)
         .filter((agent) => !knownAgentIds.has(agent.id));
+      const schedulableAgentIds = new Set<string>([...knownAgentIds, ...extraAgents.map((agent) => agent.id)]);
+      // usage_sync_state is append-only, so an agent id that was later renamed
+      // (kilo -> kilocode) keeps an orphan row. Its failure is never retried
+      // under the old id, which left the dashboard reporting "1 agent scan
+      // failed" forever. Only surface state for agents this build still scans.
+      const sources = (db.prepare(`SELECT machine_id machineId, provider_id agentId, status, last_attempt_at lastAttemptAt,
+        last_success_at lastSuccessAt, record_count recordCount, error FROM usage_sync_state ORDER BY machine_id, provider_id`).all() as SourceState[])
+        .filter((source) => schedulableAgentIds.has(source.agentId));
       return {
         mode: "live" as const,
         generatedAt: new Date().toISOString(),

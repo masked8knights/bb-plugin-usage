@@ -80,6 +80,28 @@ function text(value: unknown, fallback: string) {
   return typeof value === "string" && value.trim().length > 0 ? value : fallback;
 }
 
+// `model` is part of the event key, is stored in usage_events.model and is
+// rendered verbatim by the dashboard, so a credential that lands in a scan
+// row's model (observed: a Freebuff usage fact carrying an `fbm1.<token>`)
+// would be persisted and displayed. Keep in sync with the host-side guard in
+// lib/host-json-collector.ts so event keys stay stable.
+export function looksLikeCredential(model: string) {
+  // No real model id approaches this length.
+  if (model.length > 80) return true;
+  // `<issuer>.<payload>` with an opaque payload: model ids are lowercase
+  // words, while a token payload mixes case and digits.
+  if (/^(?:fbm\d*|sk|pk|api|tok|key|token|secret|bearer|eyj)[-._]/i.test(model)) return true;
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]*\.[A-Za-z0-9_-]{20,}$/.test(model)) return false;
+  const payload = model.slice(model.indexOf(".") + 1);
+  return /[A-Z]/.test(payload) && /[a-z]/.test(payload) && /\d/.test(payload);
+}
+
+// `model` falls back to the unknown label when it does not look like a model.
+export function modelLabel(value: unknown, fallback = "unknown") {
+  const model = text(value, fallback);
+  return looksLikeCredential(model) ? fallback : model;
+}
+
 function localDayOf(value: string): string {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime())
@@ -346,7 +368,7 @@ export function parseHostUsageAggregates(content: string, agentId: Exclude<Agent
     const timestamp = isoTimestamp(`${day}T00:00:00Z`);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !timestamp) return [];
     const modelProviderId = normalizeProviderId(text(row.modelProviderId, "unknown"));
-    const model = text(row.model, "unknown");
+    const model = modelLabel(row.model);
     const project = text(row.project, "Unknown");
     // Only the codex scan emits `account` today; it marks rows from
     // ~/.codex-profiles/<name> so each extra account lands on its own

@@ -127,6 +127,22 @@ async function hostJsonCollector(encodedInput: string, dependencies: CollectorDe
     return typeof value === "string" && value.trim() ? value : fallback;
   }
 
+  // Model labels are echoed into the event key, the on-disk cache and the
+  // usage database verbatim, and the dashboard renders them where a model /
+  // account label belongs. A bridge has been observed writing a credential
+  // (`fbm1.<token>`) into a usage fact's `model`, so reject anything that
+  // looks like a bearer token or that no real model id resembles. Mirrors
+  // `looksLikeCredential` in collectors.ts so event keys agree.
+  function modelLabel(value: unknown, fallback: string) {
+    const model = text(value, fallback);
+    if (model.length > 80) return fallback;
+    if (/^(?:fbm\d*|sk|pk|api|tok|key|token|secret|bearer|eyj)[-._]/i.test(model)) return fallback;
+    if (!/^[A-Za-z0-9][A-Za-z0-9_-]*\.[A-Za-z0-9_-]{20,}$/.test(model)) return model;
+    const payload = model.slice(model.indexOf(".") + 1);
+    if (/[A-Z]/.test(payload) && /[a-z]/.test(payload) && /\d/.test(payload)) return fallback;
+    return model;
+  }
+
   // Only the working directory's final segment is recorded, so usage can be
   // grouped by project without storing the machine's directory layout.
   function projectName(value: unknown) {
@@ -172,7 +188,7 @@ async function hostJsonCollector(encodedInput: string, dependencies: CollectorDe
     const row: HostUsageAggregate = {
       day: raw.day,
       modelProviderId: text(raw.modelProviderId, "unknown"),
-      model: text(raw.model, "unknown"),
+      model: modelLabel(raw.model, "unknown"),
       project: text(raw.project, "Unknown"),
       loggedCostUsd: finite(raw.loggedCostUsd),
       uncachedInputTokens: count(raw.uncachedInputTokens),

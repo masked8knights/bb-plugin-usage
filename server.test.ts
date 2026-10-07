@@ -458,6 +458,7 @@ describe("sync RPC", () => {
       dashboard: () => Promise<{
         agents: Array<{ id: string; name: string }>;
         records: Array<{ agentId: string; agentName: string; processedTokens: number }>;
+        sources: Array<{ agentId: string; status: string }>;
       }>;
     } | undefined;
 
@@ -564,6 +565,15 @@ describe("sync RPC", () => {
       expect.objectContaining({ agentId: "codex", agentName: "Codex", processedTokens: 125 }),
       expect.objectContaining({ agentId: "codex-saiens", agentName: "Codex (saiens)", processedTokens: 125 }),
     ]));
+
+    // usage_sync_state is append-only: an id that was later renamed (kilo ->
+    // kilocode) keeps a permanently failed orphan row, which must not be
+    // surfaced as "1 agent scan failed" forever.
+    db.prepare(`INSERT INTO usage_sync_state (machine_id, provider_id, status, last_attempt_at, record_count)
+      VALUES ('host-1', 'kilo', 'unavailable', '2026-10-06T02:54:28.123Z', 0)`).run();
+    const withOrphan = await handlers!.dashboard();
+    expect(withOrphan.sources.map((source) => source.agentId)).toContain("codex");
+    expect(withOrphan.sources.map((source) => source.agentId)).not.toContain("kilo");
 
     db.close();
   });
